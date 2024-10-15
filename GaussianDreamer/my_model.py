@@ -574,4 +574,5 @@ class My_model(nn.Module):
 
 # 使用示例
 if __name__ == "__main__":
+    print(1)
     pass
