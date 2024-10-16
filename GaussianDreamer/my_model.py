@@ -540,13 +540,14 @@ class My_model(nn.Module):
 
         criterion_vae = VaeLoss()
         for epoch in range(num_epochs):
-            #？？？？这一部分不知道什么作用
-            # self.gaussian_model.update_learning_rate(self.true_global_step)
-            
-            # if self.true_global_step > 500:
-            #     self.guidance.set_min_max_steps(min_step_percent=0.02, max_step_percent=0.55)
 
-            # self.gaussian_model.update_learning_rate(self.true_global_step)
+            #？？？？这一部分应该是更新3d Gaussian的学习率等参数的
+            self.gaussian_model.update_learning_rate(self.true_global_step)
+            
+            if self.true_global_step > 500:
+                self.guidance.set_min_max_steps(min_step_percent=0.02, max_step_percent=0.55)
+
+            self.gaussian_model.update_learning_rate(self.true_global_step)
 
             images = []
             losses = 0
@@ -574,5 +575,5 @@ class My_model(nn.Module):
 
 # 使用示例
 if __name__ == "__main__":
-    print(2)
+    print(3)
     pass
