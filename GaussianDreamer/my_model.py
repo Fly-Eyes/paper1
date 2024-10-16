@@ -6,6 +6,7 @@ import numpy as np
 from dataclasses import dataclass, field
 import torch
 import threestudio
+from math import *
 from threestudio.systems.base import BaseLift3DSystem
 from threestudio.utils.ops import binary_cross_entropy, dot
 from threestudio.utils.typing import *
@@ -19,6 +20,7 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from gaussiansplatting.utils.sh_utils import SH2RGB
 from gaussiansplatting.scene.gaussian_model import BasicPointCloud
+from Fourierembed import Embedder,get_embedder
 import numpy as np
 import io  
 from PIL import Image  
@@ -238,16 +240,19 @@ class Image_2_3D(nn.Module):
 
             return coords, rgb, 0.4
 
+
+
+        
 class My_model(nn.Module):
     
     def __init__(self, args):
         super(My_model, self).__init__()
-        self.text_encoder = self.load_encoder_model(args.text_encoder)
+        self.text_encoder = self.load_encoder_model(args.text_encoder_path)
         self.text_description = args.text_description
         self.sh_degree = args.sh_degree
         self.gaussian_model = GaussianModel(sh_degree=self.sh_degree)
         self.renderer = render  
-        self.camera_net = self.load_camera_net_model(args.camera_net)
+        self.camera_net = self.load_camera_net_model(args.camera_net_path)
         self.diffusion_model_2d = self.load_diffusion_model(args.diffusion_model_2d)
         self.cameras_extent = args.cameras_extent
         self.point_clouds_generator = Image_2_3D(args)
@@ -258,6 +263,25 @@ class My_model(nn.Module):
         if args.is_training:
                 self.imgs_gt = load_image(args.img_gt_path)
 
+    def load_encoder_model(self, path):
+        """
+            该函数用于加载文本编码器模型，并返回一个模型对象。
+            该模型的输入是文本，输出是文本的特征向量
+        """
+        return torch.load(path)
+    def load_camera_net_model(self, path):
+        """
+            该函数用于加载相机视角计算网络模型，并返回一个模型对象。
+            该模型的输入是k组图像，输出是预测的k个相机角度
+        """
+        return load_model(path)
+
+    def load_diffusion_model(self, path):
+        """
+            该函数用于加载2D图像的扩散模型，并返回一个模型对象。
+            该模型的输入是粗粒度的2D图像，输出是细粒度的图像。
+        """
+        return load_model(path)
     def add_points(self,coords,rgb):#增加扰动
         pcd_by3d = o3d.geometry.PointCloud()
         pcd_by3d.points = o3d.utility.Vector3dVector(np.array(coords))
@@ -281,9 +305,6 @@ class My_model(nn.Module):
         return all_coords,all_rgb
 
 
-    
-    
-
     def pcb(self,image): #通过shape模型初始化点云
 
         coords,rgb,scale = self.generate_3d_point_cloud_from_image(image)
@@ -297,158 +318,101 @@ class My_model(nn.Module):
 
         return pcd
     
-    #这个感觉写的太乱了
-    # def forward(self, num_epochs=100,renderbackground = None):
+
+    def forward(self, text_embedding, camera, renderbackground):
         
-    #     if renderbackground is None:
-    #         renderbackground = self.background_tensor
-    #     # 文本编码
-    #     text_embedding = self.text_encoder.encode(self.text_description)
-        
-    #     # 使用正面图像初始化3D点云并构建高斯模型
-    #     front_image = self.imgs_gt[0]
-    #     optimizer = OptimizationParams(self.parser)
+        """
+        前向过程：[计算一组(k)相机参数下]
+        1. 输入：文本嵌入、shape = [batch,token,feature]
+                相机姿态、 shape = ??
+                图像、     shape = [batch,c,H,W]
+                背景颜色（可选）
+        2. 输出：给定角度下预测的图像 shape = [batch,c,H,W]
+                相机姿态  shape = ??  
+                细粒度图像 shape = [batch,c,H,W]
 
-    #     point_cloud = self.pcb(front_image)
-    #     self.gaussian_model.create_from_pcb(point_cloud,self.cameras_extent)
-    #     self.pipe = PipelineParams(self.parser)
-    #     self.gaussian_model.training_setup(optimizer)
-        
-
-        
-    #     criterion_img = nn.MSELoss()
-    #     # 假设有一个适当的相机姿态损失函数
-    #     criterion_pose = Camera_Loss_Function()
-
-    #     for epoch in range(num_epochs):
-    #         #？？？？这一部分不知道什么作用
-    #         # self.gaussian_model.update_learning_rate(self.true_global_step)
-            
-    #         # if self.true_global_step > 500:
-    #         #     self.guidance.set_min_max_steps(min_step_percent=0.02, max_step_percent=0.55)
-
-    #         # self.gaussian_model.update_learning_rate(self.true_global_step)
-
-    #         images = []
-
-    #         for i, (image_gt, pose) in enumerate(zip(self.imgs_gt, self.camera_poses)):
-    #             # 姿态编码
-                
-    #             pose_embedding = self.encoder_pose(pose)
-    #             #暂时定的pose中包括  'c2w'、'Fovx'、,'Fovy'、,'height'、'width',
-    #             mixed_embedding = text_embedding + pose_embedding  # 可以选择更复杂的融合方法
-                
-    #             # 渲染得到粗略图像
-    #             viewpoint_cam  = self.cameras[i]
-
-    #             render_pkg = self.renderer(viewpoint_cam, self.gaussian, self.pipe, renderbackground)
-    #             coarse_image, viewspace_point_tensor, _, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-    #             self.viewspace_point_list.append(viewspace_point_tensor)
-                    
-    #             # 添加噪声
-    #             noise = torch.randn_like(coarse_image)
-    #             coarse_img_noise = coarse_image + noise
-                
-    #             # 通过2D扩散模型去噪
-    #             fine_img = self.diffusion_model_2d.denoise(coarse_img_noise, mixed_embedding)
-                
-    #             # 预测相机姿态
-    #             predicted_pose = self.camera_net.predict(fine_img)
-                
-    #             # 计算损失
-    #             img_loss = criterion_img(fine_img, image_gt)
-    #             pose_loss = criterion_pose(predicted_pose, pose)
-    #             total_loss = img_loss + pose_loss  # 可以调整权重
-                
-    #             # 反向传播
-    #             optimizer.zero_grad()
-    #             total_loss.backward()
-    #             optimizer.step()
-            
-    #         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {total_loss.item()}")
-
-
-    def forward(self, text_embedding, pose, one_camera, renderbackground):
-            
-        pose_embedding = self.encoder_pose(pose)
+        """
+        ####################################################################################
+        #          此处需要从camera对象中提取出对应的需要编码的信息                            #
+        pose_embedding = self.Fourierembedding_of_cam(text_embedding.shape[1],camera)      #       
+        ####################################################################################
         #暂时定的pose中包括  'c2w'、'Fovx'、,'Fovy'、,'height'、'width',
         mixed_embedding = text_embedding + pose_embedding  # 可以选择更复杂的融合方法
-        
-        # 渲染得到粗略图像
-        viewpoint_cam  = one_camera
 
-        render_pkg = self.renderer(viewpoint_cam, self.gaussian, self.pipe, renderbackground)
-        coarse_image, viewspace_point_tensor, _, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        mixed_feature = self.text_encoder(mixed_embedding)
+        
+        render_pkg = self.renderer(camera_poses, self.gaussian, self.pipe, renderbackground)
+        coarse_images, viewspace_point_tensor, _, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         self.viewspace_point_list.append(viewspace_point_tensor)
-            
+        
         # 添加噪声
-        noise = torch.randn_like(coarse_image)
-        coarse_img_noise = coarse_image + noise
+        noise = torch.randn_like(coarse_images)
+        coarse_img_noise = coarse_images + noise
         
         # 通过2D扩散模型去噪
-        fine_img = self.diffusion_model_2d.denoise(coarse_img_noise, mixed_embedding)
+        fine_img = self.diffusion_model_2d.denoise(coarse_img_noise, mixed_feature)
         
         # 预测相机姿态
         predicted_pose = self.camera_net.predict(fine_img)
         return fine_img, predicted_pose
+    def Fourierembedding_of_cam(self,multires,camera):
+        Fourierembedding, out_dim= get_embedder(log(multires))
+        return Fourierembedding(camera)
 
+def train(self, num_epochs=100,renderbackground = None):
+    self.guidance = threestudio.find(self.cfg.guidance_type)(self.cfg.guidance)
+    if renderbackground is None:
+        renderbackground = self.background_tensor
+    # 文本编码
+    text_embedding = self.text_encoder.encode(self.text_description)
+    
+    # 使用正面图像初始化3D点云并构建高斯模型
+    front_image = self.imgs_gt[0]
+    optimizer = OptimizationParams(self.parser)
 
-    def train(self, num_epochs=100,renderbackground = None):
-        self.guidance = threestudio.find(self.cfg.guidance_type)(self.cfg.guidance)
-        if renderbackground is None:
-            renderbackground = self.background_tensor
-        # 文本编码
-        text_embedding = self.text_encoder.encode(self.text_description)
+    point_cloud = self.pcb(front_image)
+    self.gaussian_model.create_from_pcb(point_cloud,self.cameras_extent)
+    self.pipe = PipelineParams(self.parser)
+    self.gaussian_model.training_setup(optimizer)
+    
+
+    
+    criterion_img = nn.MSELoss()
+    # 假设有一个适当的相机姿态损失函数
+    criterion_pose = Camera_Loss_Function()
+
+    criterion_vae = VaeLoss()
+    for epoch in range(num_epochs):
+        #？？？？这一部分不知道什么作用
+        # self.gaussian_model.update_learning_rate(self.true_global_step)
         
-        # 使用正面图像初始化3D点云并构建高斯模型
-        front_image = self.imgs_gt[0]
-        optimizer = OptimizationParams(self.parser)
+        # if self.true_global_step > 500:
+        #     self.guidance.set_min_max_steps(min_step_percent=0.02, max_step_percent=0.55)
 
-        point_cloud = self.pcb(front_image)
-        self.gaussian_model.create_from_pcb(point_cloud,self.cameras_extent)
-        self.pipe = PipelineParams(self.parser)
-        self.gaussian_model.training_setup(optimizer)
-        
+        # self.gaussian_model.update_learning_rate(self.true_global_step)
 
-        
-        criterion_img = nn.MSELoss()
-        # 假设有一个适当的相机姿态损失函数
-        criterion_pose = Camera_Loss_Function()
-
-        criterion_vae = VaeLoss()
-        for epoch in range(num_epochs):
-            #？？？？这一部分不知道什么作用
-            # self.gaussian_model.update_learning_rate(self.true_global_step)
+        images = []
+        losses = 0
+        for i, (image_gt, pose) in enumerate(zip(self.imgs_gt, self.camera_poses)):
+            loss = 0
+            # 姿态编码
+            fine_img, predicted_pose = self(text_embedding, pose, self.cameras[i], renderbackground)               
+            # 计算损失
+            img_loss = criterion_img(fine_img, image_gt)
+            pose_loss = criterion_pose(predicted_pose, pose)
+            vae_loss = criterion_vae()
+            loss = img_loss + pose_loss + vae_loss  # 可以调整权重
             
-            # if self.true_global_step > 500:
-            #     self.guidance.set_min_max_steps(min_step_percent=0.02, max_step_percent=0.55)
-
-            # self.gaussian_model.update_learning_rate(self.true_global_step)
-
-            images = []
-            losses = 0
-            for i, (image_gt, pose) in enumerate(zip(self.imgs_gt, self.camera_poses)):
-                loss = 0
-                # 姿态编码
-                fine_img, predicted_pose = self(text_embedding, pose, self.cameras[i], renderbackground)               
-                # 计算损失
-                img_loss = criterion_img(fine_img, image_gt)
-                pose_loss = criterion_pose(predicted_pose, pose)
-                vae_loss = criterion_vae()
-                loss = img_loss + pose_loss + vae_loss  # 可以调整权重
-                
-                losses += loss
-            # 反向传播
-            optimizer.zero_grad()
-            losses.backward()
-            optimizer.step()
-            
-            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {losses.item()}")
-    def encoder_pose(self, pose):
-        # 实现傅里叶编码或其他形式的姿态编码
-        pass
+            losses += loss
+        # 反向传播
+        optimizer.zero_grad()
+        losses.backward()
+        optimizer.step()
+        
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {losses.item()}")
+    
 
 
 # 使用示例
 if __name__ == "__main__":
-    
+    train()
