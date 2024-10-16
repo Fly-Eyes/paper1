@@ -134,70 +134,6 @@ def generate_3d_point_cloud_text(prompt, output_file='output.ply'):
     return coords, rgb, 0.4
 
 
-# def generate_3d_point_cloud_image(image_path, output_file='output.ply'):
-#     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-#     # 加载模型
-#     xm = load_model('transmitter', device=device)
-#     model = load_model('image300M', device=device)  # 使用基于图像的模型
-#     #model.load_state_dict(torch.load('./load/shapE_finetuned_with_330kdata.pth', map_location=device)['model_state_dict'])
-#     diffusion = diffusion_from_config_shape(load_config('diffusion'))
-
-#     batch_size = 1
-#     guidance_scale = 3.0  # 你可以根据需要调整这个值
-
-#     # 加载图像
-#     image = load_image(image_path)
-
-#     # 打印图像路径
-#     print('Image:', image_path)
-
-#     # 采样潜在向量
-#     latents = sample_latents(
-#         batch_size=batch_size,
-#         model=model,
-#         diffusion=diffusion,
-#         guidance_scale=guidance_scale,
-#         model_kwargs=dict(images=[image] * batch_size),
-#         progress=True,
-#         clip_denoised=True,
-#         use_fp16=True,
-#         use_karras=True,
-#         karras_steps=64,
-#         sigma_min=1e-3,
-#         sigma_max=160,
-#         s_churn=0,
-#     )
-
-#     # 解码潜在网格
-#     pc = decode_latent_mesh(xm, latents[0]).tri_mesh()
-
-#     # 提取坐标和颜色
-#     coords = pc.verts
-#     rgb = np.concatenate([pc.vertex_channels['R'][:, None], 
-#                          pc.vertex_channels['G'][:, None], 
-#                          pc.vertex_channels['B'][:, None]], axis=1)
-
-#     print(rgb[0:5])
-#     if np.all((rgb >= 0) & (rgb <= 1)):
-#     # 创建Open3D点云对象
-#         print("无需归一化")
-#         point_cloud = o3d.geometry.PointCloud()
-#         point_cloud.points = o3d.utility.Vector3dVector(coords)
-#         point_cloud.colors = o3d.utility.Vector3dVector(rgb)  # 不需要再次归一化
-#     else:
-#         # 如果颜色数据不是归一化的，则归一化到 [0, 1]
-#         rgb_normalized = rgb.astype(np.float64) / 255.0
-#         point_cloud = o3d.geometry.PointCloud()
-#         point_cloud.points = o3d.utility.Vector3dVector(coords)
-#         point_cloud.colors = o3d.utility.Vector3dVector(rgb_normalized)
-
-#     # 保存点云
-#     o3d.io.write_point_cloud(output_file, point_cloud)
-
-#     return coords, rgb, 0.4
-
-
 
 def on_before_optimizer_step(self, optimizer):
 
@@ -217,65 +153,6 @@ def on_before_optimizer_step(self, optimizer):
                     self.gaussian.densify_and_prune(0.0002 , 0.05, self.cameras_extent, size_threshold) 
 
 
-
-
-def forward(self, batch: Dict[str, Any],renderbackground = None) -> Dict[str, Any]:
-
-        if renderbackground is None:
-            renderbackground = self.background_tensor
-        images = []
-        depths = []
-        self.viewspace_point_list = []
-        for id in range(batch['c2w_3dgs'].shape[0]):
-       
-            viewpoint_cam  = Camera(c2w = batch['c2w_3dgs'][id],FoVy = batch['fovy'][id],height = batch['height'],width = batch['width'])
-
-
-            render_pkg = render(viewpoint_cam, self.gaussian, self.pipe, renderbackground)
-            image, viewspace_point_tensor, _, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-            self.viewspace_point_list.append(viewspace_point_tensor)
-
-            if id == 0:
-
-                self.radii = radii
-            else:
-
-
-                self.radii = torch.max(radii,self.radii)
-                
-            depth = render_pkg["depth_3dgs"]
-            depth =  depth.permute(1, 2, 0)
-            
-            image =  image.permute(1, 2, 0)
-            images.append(image)
-            depths.append(depth)
-            
-        images = torch.stack(images, 0)
-        depths = torch.stack(depths, 0)
-        self.visibility_filter = self.radii>0.0
-        render_pkg["comp_rgb"] = images
-        render_pkg["depth"] = depths
-        render_pkg["opacity"] = depths / (depths.max() + 1e-5)
-        return {
-            **render_pkg,
-        }
-
-
-def configure_optimizers(self):
-    self.parser = ArgumentParser(description="Training script parameters")
-    
-    opt = OptimizationParams(self.parser)
-    point_cloud = self.pcb()
-    self.cameras_extent = 4.0
-    self.gaussian.create_from_pcd(point_cloud, self.cameras_extent)
-
-    self.pipe = PipelineParams(self.parser)
-    self.gaussian.training_setup(opt)
-    
-    ret = {
-        "optimizer": self.gaussian.optimizer,
-    }
-    return ret
 
 
 def config_parser():
@@ -574,5 +451,4 @@ class My_model(nn.Module):
 
 # 使用示例
 if __name__ == "__main__":
-    print(1)
-    pass
+    
