@@ -160,7 +160,7 @@ def on_before_optimizer_step(self, optimizer):
 def config_parser():
     parser = configargparse.ArgumentParser()
     # 添加必要的参数
-    parser.add_argument('--text_encoder', type=str, required=True, help='Path to the text encoder model')
+    parser.add_argument('--text_encoder_path', type=str, required=True, help='Path to the text encoder model')
     parser.add_argument('--text_description', type=str,required=True,help= 'descripe what 3d obj you want')
     parser.add_argument('--sh_degree', type=int, default=2, help='Degree of spherical harmonics')
     parser.add_argument('--camera_pose_json_path', type=str, required=True, help='Path to the JSON file containing camera poses')
@@ -247,11 +247,12 @@ class My_model(nn.Module):
     
     def __init__(self, args):
         super(My_model, self).__init__()
-        self.text_encoder = self.load_encoder_model(args.text_encoder_path)
-        self.text_description = args.text_description
+        # self.text_encoder = self.load_encoder_model(args.text_encoder_path)
+        # self.text_description = args.text_description
         self.sh_degree = args.sh_degree
         self.gaussian_model = GaussianModel(sh_degree=self.sh_degree)
         self.renderer = render  
+        self.pipe = PipelineParams(args)
         self.camera_net = self.load_camera_net_model(args.camera_net_path)
         self.diffusion_model_2d = self.load_diffusion_model(args.diffusion_model_2d)
         self.cameras_extent = args.cameras_extent
@@ -263,7 +264,7 @@ class My_model(nn.Module):
         if args.is_training:
                 self.imgs_gt = load_image(args.img_gt_path)
 
-    def load_encoder_model(self, path):
+    def load_encoder_model(path):
         """
             该函数用于加载文本编码器模型，并返回一个模型对象。
             该模型的输入是文本，输出是文本的特征向量
@@ -329,9 +330,10 @@ class My_model(nn.Module):
                 背景颜色（可选）
         2. 输出：给定角度下预测的图像 shape = [batch,c,H,W]
                 相机姿态  shape = ??  
-                细粒度图像 shape = [batch,c,H,W]
+                粗粒度图像 shape = [batch,c,H,W]
 
         """
+        
         ####################################################################################
         #          此处需要从camera对象中提取出对应的需要编码的信息                            #
         pose_embedding = self.Fourierembedding_of_cam(text_embedding.shape[1],camera)      #       
@@ -341,7 +343,7 @@ class My_model(nn.Module):
 
         mixed_feature = self.text_encoder(mixed_embedding)
         
-        render_pkg = self.renderer(camera_poses, self.gaussian, self.pipe, renderbackground)
+        render_pkg = self.renderer(camera, self.gaussian_model, self.pipe, renderbackground)
         coarse_images, viewspace_point_tensor, _, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         self.viewspace_point_list.append(viewspace_point_tensor)
         
@@ -354,65 +356,13 @@ class My_model(nn.Module):
         
         # 预测相机姿态
         predicted_pose = self.camera_net.predict(fine_img)
-        return fine_img, predicted_pose
+        return fine_img, predicted_pose, coarse_images
     def Fourierembedding_of_cam(self,multires,camera):
         Fourierembedding, out_dim= get_embedder(log(multires))
         return Fourierembedding(camera)
 
-def train(self, num_epochs=100,renderbackground = None):
-    self.guidance = threestudio.find(self.cfg.guidance_type)(self.cfg.guidance)
-    if renderbackground is None:
-        renderbackground = self.background_tensor
-    # 文本编码
-    text_embedding = self.text_encoder.encode(self.text_description)
-    
-    # 使用正面图像初始化3D点云并构建高斯模型
-    front_image = self.imgs_gt[0]
-    optimizer = OptimizationParams(self.parser)
-
-    point_cloud = self.pcb(front_image)
-    self.gaussian_model.create_from_pcb(point_cloud,self.cameras_extent)
-    self.pipe = PipelineParams(self.parser)
-    self.gaussian_model.training_setup(optimizer)
-    
-
-    
-    criterion_img = nn.MSELoss()
-    # 假设有一个适当的相机姿态损失函数
-    criterion_pose = Camera_Loss_Function()
-
-    criterion_vae = VaeLoss()
-    for epoch in range(num_epochs):
-        #？？？？这一部分不知道什么作用
-        # self.gaussian_model.update_learning_rate(self.true_global_step)
-        
-        # if self.true_global_step > 500:
-        #     self.guidance.set_min_max_steps(min_step_percent=0.02, max_step_percent=0.55)
-
-        # self.gaussian_model.update_learning_rate(self.true_global_step)
-
-        images = []
-        losses = 0
-        for i, (image_gt, pose) in enumerate(zip(self.imgs_gt, self.camera_poses)):
-            loss = 0
-            # 姿态编码
-            fine_img, predicted_pose = self(text_embedding, pose, self.cameras[i], renderbackground)               
-            # 计算损失
-            img_loss = criterion_img(fine_img, image_gt)
-            pose_loss = criterion_pose(predicted_pose, pose)
-            vae_loss = criterion_vae()
-            loss = img_loss + pose_loss + vae_loss  # 可以调整权重
-            
-            losses += loss
-        # 反向传播
-        optimizer.zero_grad()
-        losses.backward()
-        optimizer.step()
-        
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {losses.item()}")
-    
 
 
 # 使用示例
 if __name__ == "__main__":
-    train()
+    pass
